@@ -14,6 +14,8 @@ import { getFormById, updateForm } from "@/lib/db"
 import Link from "next/link"
 import { detectBlankAreas } from "@/lib/image-analysis"
 import { cn } from "@/lib/utils"
+import { GameSearchDialog } from "@/components/GameSearchDialog"
+import { GameSearchResult } from "@/lib/types"
 
 interface FormData {
   id: string
@@ -70,6 +72,7 @@ export default function EditFormPage() {
 
   const [hoveredArea, setHoveredArea] = useState<{ x: number; y: number; width: number; height: number } | null>(null)
   const [isDragging, setIsDragging] = useState(false)
+  const [showSearchDialog, setShowSearchDialog] = useState(false)
 
   const loadForm = async () => {
     setIsLoading(true)
@@ -496,7 +499,8 @@ export default function EditFormPage() {
 
         if (clickedBlankArea) {
           setClickedArea(clickedBlankArea)
-          fileInputRef.current?.click()
+          // 不再直接调用fileInputRef.current?.click()，而是显示搜索对话框
+          setShowSearchDialog(true)
         }
       }
     }
@@ -569,7 +573,8 @@ export default function EditFormPage() {
 
         if (clickedBlankArea) {
           setClickedArea(clickedBlankArea)
-          fileInputRef.current?.click()
+          // 不再直接调用fileInputRef.current?.click()，而是显示搜索对话框
+          setShowSearchDialog(true)
         }
       }
     }
@@ -1026,6 +1031,83 @@ export default function EditFormPage() {
     reader.readAsDataURL(file)
   }
 
+  // 处理选择游戏
+  const handleSelectGame = (game: GameSearchResult) => {
+    if (!canvasRef.current || !clickedArea) return
+    
+    // 关闭搜索对话框
+    setShowSearchDialog(false)
+    
+    // 如果游戏有图片，加载图片到画布
+    if (game.image) {
+      const img = new Image()
+      img.crossOrigin = "anonymous"
+      img.onload = () => {
+        const canvas = canvasRef.current
+        if (!canvas) return
+
+        const ctx = canvas.getContext("2d")
+        if (!ctx) return
+
+        const area = clickedArea
+
+        // Clear the area first to prevent image stacking
+        ctx.clearRect(area.x, area.y, area.width, area.height)
+
+        if (adaptiveUpload) {
+          // Crop and scale the image to fill the area completely
+          const sourceAspect = img.width / img.height
+          const targetAspect = area.width / area.height
+
+          let sx = 0,
+            sy = 0,
+            sWidth = img.width,
+            sHeight = img.height
+
+          if (sourceAspect > targetAspect) {
+            // Image is wider than the target area
+            sWidth = img.height * targetAspect
+            sx = (img.width - sWidth) / 2
+          } else {
+            // Image is taller than the target area
+            sHeight = img.width / targetAspect
+            sy = (img.height - sHeight) / 2
+          }
+
+          // Draw the cropped image to fill the area
+          ctx.drawImage(img, sx, sy, sWidth, sHeight, area.x, area.y, area.width, area.height)
+        } else {
+          // Scale the image to fit within the area while maintaining aspect ratio
+          const scale = Math.min(area.width / img.width, area.height / img.height)
+          const newWidth = img.width * scale
+          const newHeight = img.height * scale
+
+          // Center the image in the blank area
+          const x = area.x + (area.width - newWidth) / 2
+          const y = area.y + (area.height - newHeight) / 2
+
+          ctx.drawImage(img, x, y, newWidth, newHeight)
+        }
+
+        // Update the base image
+        const updatedBaseImage = canvas.toDataURL("image/png")
+
+        // Save the updated form
+        if (formData) {
+          const updatedForm = {
+            ...formData,
+            canvasData: updatedBaseImage,
+            timestamp: Date.now(),
+            size: new Blob([updatedBaseImage]).size,
+          }
+          updateForm(updatedForm)
+          setFormData(updatedForm)
+        }
+      }
+      img.src = game.image
+    }
+  }
+
   const renderDrawingToolbar = () => {
     if (currentMode !== "draw") return null
 
@@ -1165,8 +1247,8 @@ export default function EditFormPage() {
               </Label>
               <Slider
                 id="eraser-size"
-                min={5}
-                max={50}
+                min={16}
+                max={96}
                 step={1}
                 value={[eraserSize]}
                 onValueChange={(value) => setEraserSize(value[0])}
@@ -1468,6 +1550,23 @@ export default function EditFormPage() {
 
         <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileChange} />
       </div>
+
+      {/* 添加游戏搜索对话框 */}
+      <GameSearchDialog
+        isOpen={showSearchDialog}
+        onOpenChange={setShowSearchDialog}
+        onSelectGame={handleSelectGame}
+        onUploadImage={(file) => {
+          // 保持原有的文件上传功能
+          if (fileInputRef.current) {
+            const dataTransfer = new DataTransfer()
+            dataTransfer.items.add(file)
+            fileInputRef.current.files = dataTransfer.files
+            const event = new Event('change', { bubbles: true })
+            fileInputRef.current.dispatchEvent(event)
+          }
+        }}
+      />
     </div>
   )
 }
