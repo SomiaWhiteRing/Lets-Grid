@@ -7,9 +7,9 @@ import RootLayoutClient from '@/components/RootLayoutClient'
 const inter = Inter({ subsets: ["latin"] })
 
 export const metadata: Metadata = {
-  title: 'v0 App',
-  description: 'Created with v0',
-  generator: 'v0.dev',
+  title: '万能填表器',
+  description: '一键填写做好的表格！',
+  generator: '苍旻白轮',
 }
 
 export default function RootLayout({

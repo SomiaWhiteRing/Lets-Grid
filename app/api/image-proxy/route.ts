@@ -1,5 +1,12 @@
 import { NextRequest } from "next/server";
 
+// Bangumi API Access Token
+const BANGUMI_ACCESS_TOKEN = process.env.BANGUMI_ACCESS_TOKEN;
+// Bangumi API User Agent
+const BANGUMI_USER_AGENT =
+  process.env.BANGUMI_USER_AGENT ||
+  "LetsGrid/1.0 (https://github.com/SomiaWhiteRing/Lets-Grid)";
+
 // 判断URL是否合法的函数
 function isValidImageUrl(url: string): boolean {
   try {
@@ -52,8 +59,9 @@ export async function GET(request: NextRequest) {
       const response = await fetch(imageUrl, {
         signal: controller.signal,
         headers: {
-          "User-Agent": "LetsGrid/1.0",
+          "User-Agent": BANGUMI_USER_AGENT,
           Referer: "https://bgm.tv/",
+          Authorization: `Bearer ${BANGUMI_ACCESS_TOKEN}`,
         },
         cache: "no-store",
       });

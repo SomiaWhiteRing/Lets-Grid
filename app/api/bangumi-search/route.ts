@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GameSearchResult, CHARACTER_TYPE, PERSON_TYPE } from "@/lib/types";
 
+// Bangumi API Access Token
+const BANGUMI_ACCESS_TOKEN = process.env.BANGUMI_ACCESS_TOKEN;
+// Bangumi API User Agent
+const BANGUMI_USER_AGENT =
+  process.env.BANGUMI_USER_AGENT ||
+  "LetsGrid/1.0 (https://github.com/SomiaWhiteRing/Lets-Grid)";
+
 // 默认的封面URL前缀
 const IMAGE_PREFIX = "https://lain.bgm.tv/pic/cover/";
 // 角色图片前缀
@@ -35,6 +42,11 @@ async function fetchWithRetry(
 
   throw lastError;
 }
+
+// 全局变量，记录上次预热时间
+let lastPreheatingTime = 0;
+// 预热有效期，5分钟
+const PREHEATING_TTL = 5 * 60 * 1000;
 
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
@@ -162,15 +174,71 @@ export async function GET(request: NextRequest) {
     await writer.close();
   };
 
+  // 执行对Bangumi API的预热请求
+  const executeBangumiApiPreheating = async () => {
+    try {
+      // 访问一个轻量级的API端点，以保持连接活跃
+      const apiUrl = `https://api.bgm.tv/search/subject/test?type=4&responseGroup=small`;
+      console.log("预热: 正在连接Bangumi API...");
+
+      // 执行实际API调用
+      const response = await fetchWithRetry(
+        apiUrl,
+        {
+          method: "GET",
+          headers: {
+            "User-Agent": BANGUMI_USER_AGENT,
+            "Content-Type": "application/json",
+            ...(BANGUMI_ACCESS_TOKEN && {
+              Authorization: `Bearer ${BANGUMI_ACCESS_TOKEN}`,
+            }),
+          },
+          // 预热请求使用较短的超时时间
+          signal: AbortSignal.timeout(5000),
+        },
+        1 // 最多重试1次
+      );
+
+      // 记录预热时间
+      lastPreheatingTime = Date.now();
+
+      console.log(`预热: Bangumi API连接成功，HTTP状态: ${response.status}`);
+      return true;
+    } catch (error) {
+      console.error("预热: Bangumi API连接失败:", error);
+      return false;
+    }
+  };
+
   // 主流程
   const doSearch = async () => {
     try {
       await sendInitMessage();
 
-      // 预热请求直接返回
+      // 如果是预热请求，执行预热逻辑
       if (isPreheating) {
-        console.log("预热请求已处理");
-        return await sendEndMessage("预热请求已处理");
+        console.log("收到预热请求，开始预热Bangumi API");
+
+        // 执行实际的API预热
+        const preheatingSuccess = await executeBangumiApiPreheating();
+
+        if (preheatingSuccess) {
+          return await sendEndMessage("预热成功，API连接已建立");
+        } else {
+          return await sendEndMessage("预热尝试完成，但API连接未成功建立");
+        }
+      }
+
+      // 检查是否需要执行预热（如果距离上次预热已超过有效期）
+      const now = Date.now();
+      const needsPreheating = now - lastPreheatingTime > PREHEATING_TTL;
+
+      if (needsPreheating) {
+        console.log("API连接可能已过期，尝试重新预热");
+        // 后台执行预热，不等待结果
+        executeBangumiApiPreheating().catch((e) =>
+          console.error("后台预热失败:", e)
+        );
       }
 
       // 构建Bangumi API URL
@@ -201,9 +269,11 @@ export async function GET(request: NextRequest) {
         {
           method: apiMethod,
           headers: {
-            "User-Agent":
-              "LetsGrid/1.0 (https://github.com/username/lets-grid)",
+            "User-Agent": BANGUMI_USER_AGENT,
             "Content-Type": "application/json",
+            ...(BANGUMI_ACCESS_TOKEN && {
+              Authorization: `Bearer ${BANGUMI_ACCESS_TOKEN}`,
+            }),
           },
           body: apiBody,
           // 设置较短的超时时间

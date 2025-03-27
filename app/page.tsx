@@ -150,7 +150,7 @@ export default function HomePage() {
   }
 
   return (
-    <div className="container mx-auto py-8 px-4 max-w-3xl">
+    <div className="container mx-auto py-8 px-4 max-w-3xl min-h-screen flex flex-col relative pb-48">
       <h1 className="text-3xl font-bold mb-8 text-center">万能填表器</h1>
 
       {isProcessing ? (
@@ -161,7 +161,7 @@ export default function HomePage() {
           <p className="text-sm text-muted-foreground">请稍候，正在处理您的表格...</p>
         </div>
       ) : (
-        <div className="grid gap-4">
+        <div className="grid gap-4 flex-grow mb-8">
           <Card className="cursor-pointer hover:bg-muted/50 transition-colors border-dashed" onClick={handleAddNew}>
             <CardContent className="flex items-center justify-center p-6">
               <div className="flex flex-col items-center gap-2">
@@ -220,6 +220,46 @@ export default function HomePage() {
           )}
         </div>
       )}
+      
+      <footer className="fixed bottom-0 left-0 right-0 py-4 border-t bg-white/95 backdrop-blur-sm">
+        <div className="text-sm text-gray-500 text-center max-w-3xl mx-auto px-4">
+          <p className="flex items-center justify-center mb-1">
+          如果觉得对你有用请不吝→
+          <a 
+            href="https://github.com/SomiaWhiteRing/gamegrid" 
+            target="_blank"
+            rel="noopener noreferrer"
+            className="ml-2 inline-flex items-center"
+          >
+            <img 
+              src="https://img.shields.io/github/stars/SomiaWhiteRing/lets-grid?style=social" 
+              alt="GitHub Stars" 
+              className="align-middle"
+            />
+          </a>
+        </p>
+        <p className="flex items-center justify-center">
+          <a className="text-blue-500 mr-1" href="https://weibo.com/6571509464/Phs2X0DIy">苍旻白轮</a> Powered by Vercel & Bangumi
+        </p>
+        <p className="flex items-center justify-center mt-1">
+          前作(?)：<a className="text-blue-500" href="https://gamegrid.shatranj.space/">游戏生涯个人喜好表</a>
+        </p>
+        <p className="flex items-center justify-center mt-1">
+          <a 
+            href="https://hits.sh/github.com/SomiaWhiteRing/Lets-Grid/"
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="inline-flex items-center"
+          >
+            <img 
+              src="https://hits.sh/github.com/SomiaWhiteRing/Lets-Grid.svg?label=visitors&color=007ec6"
+              alt="Visitors Count"
+              className="align-middle"
+            />
+          </a>
+        </p>
+        </div>
+      </footer>
     </div>
   )
 }
