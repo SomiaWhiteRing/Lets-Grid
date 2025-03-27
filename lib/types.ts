@@ -4,7 +4,6 @@ export interface GameSearchResult {
   name: string;
   image?: string;
   info?: string;
-  source?: "bangumi" | "steamgriddb";
   type?: number; // bangumi类型
 }
 

@@ -146,7 +146,7 @@ export function GameSearchDialog({ isOpen, onOpenChange, onSelectGame, onUploadI
       if (isLoading && currentAbortController === abortControllerRef.current) {
         setSearchStatus({ 
           state: 'searching', 
-          message: '搜索时间较长，正在努力获取结果...' 
+          message: '正在搜索...' 
         });
       }
     }, 3000);
@@ -157,7 +157,8 @@ export function GameSearchDialog({ isOpen, onOpenChange, onSelectGame, onUploadI
       
       // 使用当前 AbortController 的信号
       const response = await fetch(apiEndpoint, {
-        signal: currentAbortController.signal
+        signal: currentAbortController.signal,
+        cache: 'no-store'
       });
 
       // 检查当前操作是否已被更新的请求取代
@@ -185,95 +186,122 @@ export function GameSearchDialog({ isOpen, onOpenChange, onSelectGame, onUploadI
       let done = false;
       let buffer = "";
       let reachEnd = false;
+      
+      // 用于控制流处理超时
+      const streamTimeoutId = setTimeout(() => {
+        if (!reachEnd && currentAbortController === abortControllerRef.current) {
+          console.log('流处理超时');
+          reader.cancel('Stream processing timeout').catch(console.error);
+          
+          setSearchStatus({ 
+            state: 'error', 
+            message: "搜索超时，请重试" 
+          });
+          
+          setIsLoading(false);
+          
+          if (currentAbortController === abortControllerRef.current) {
+            abortControllerRef.current = null;
+          }
+        }
+      }, 15000); // 15秒超时
 
       // 流式处理部分不变，但添加检查确保当前控制器仍然有效
       while (!done) {
         // 添加检查确保当前控制器仍然有效
         if (currentAbortController !== abortControllerRef.current) {
           console.log('流处理被新请求中断');
+          clearTimeout(streamTimeoutId);
           return;
         }
         
-        const { value, done: readerDone } = await reader.read();
-        done = readerDone;
+        try {
+          const { value, done: readerDone } = await reader.read();
+          done = readerDone;
 
-        if (value) {
-          buffer += decoder.decode(value, { stream: true });
+          if (value) {
+            buffer += decoder.decode(value, { stream: true });
 
-          // 处理缓冲区中的完整消息
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || ""; // 保留最后一个可能不完整的行
+            // 处理缓冲区中的完整消息
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || ""; // 保留最后一个可能不完整的行
 
-          for (const line of lines) {
-            if (!line.trim()) continue;
+            for (const line of lines) {
+              if (!line.trim()) continue;
 
-            try {
-              const data = JSON.parse(line);
+              try {
+                const data = JSON.parse(line);
 
-              switch (data.type) {
-                case "init":
-                  // 保存服务端返回的总结果数量
-                  if (data.total !== undefined) {
-                    setTotalResults(data.total);
-                    setSearchStatus({ 
-                      state: 'searching', 
-                      message: `找到 ${data.total} 个结果，正在加载封面……` 
-                    });
-                  } else {
-                    setSearchStatus({ 
-                      state: 'searching', 
-                      message: `正在搜索……` 
-                    });
-                  }
-                  break;
+                switch (data.type) {
+                  case "init":
+                    // 保存服务端返回的总结果数量
+                    if (data.total !== undefined) {
+                      setTotalResults(data.total);
+                      setSearchStatus({ 
+                        state: 'searching', 
+                        message: `找到 ${data.total} 个结果` 
+                      });
+                    } else {
+                      setSearchStatus({ 
+                        state: 'searching', 
+                        message: `正在搜索` 
+                      });
+                    }
+                    break;
 
-                case "gameStart":
-                  // 游戏开始加载，添加到结果中（无图片）
-                  if (data.game.id !== undefined) {
-                    receivedGames.set(data.game.id, data.game);
-                  }
-                  games = Array.from(receivedGames.values());
-                  setSearchResults([...games]);
-                  break;
+                  case "gameStart":
+                    // 游戏开始加载，添加到结果中（无图片）
+                    if (data.game.id !== undefined) {
+                      receivedGames.set(data.game.id, data.game);
+                    }
+                    games = Array.from(receivedGames.values());
+                    setSearchResults([...games]);
+                    break;
 
-                case "gameComplete":
-                  // 游戏加载完成（有图片），更新结果
-                  if (data.game.id !== undefined) {
-                    receivedGames.set(data.game.id, data.game);
-                  }
-                  games = Array.from(receivedGames.values());
-                  setSearchResults([...games]);
-                  break;
+                  case "gameComplete":
+                    // 游戏加载完成（有图片），更新结果
+                    if (data.game.id !== undefined) {
+                      receivedGames.set(data.game.id, data.game);
+                    }
+                    games = Array.from(receivedGames.values());
+                    setSearchResults([...games]);
+                    break;
 
-                case "gameError":
-                  console.error(`游戏 ${data.gameId} 加载失败:`, data.error);
-                  break;
+                  case "gameError":
+                    console.error(`游戏 ${data.gameId} 加载失败:`, data.error);
+                    break;
 
-                case "error":
-                  setSearchStatus({ state: 'error', message: data.message || "搜索失败" });
-                  break;
+                  case "error":
+                    setSearchStatus({ state: 'error', message: data.message || "搜索失败" });
+                    break;
 
-                case "end":
-                  reachEnd = true;
-                  if (games.length > 0) {
-                    setSearchStatus({ state: 'success', message: '' });
-                  } else {
-                    setSearchStatus({ 
-                      state: 'no-results', 
-                      message: data.message || "未找到相关内容" 
-                    });
-                  }
-                  break;
+                  case "end":
+                    reachEnd = true;
+                    clearTimeout(streamTimeoutId);
+                    if (games.length > 0) {
+                      setSearchStatus({ state: 'success', message: '' });
+                    } else {
+                      setSearchStatus({ 
+                        state: 'no-results', 
+                        message: data.message || "未找到相关内容" 
+                      });
+                    }
+                    break;
+                }
+              } catch (error) {
+                console.error("解析响应数据失败:", error, line);
               }
-            } catch (error) {
-              console.error("解析响应数据失败:", error, line);
             }
           }
+        } catch (readError) {
+          console.error("读取流数据失败:", readError);
+          throw readError;
         }
       }
 
       // 如果流结束但没有收到end消息
       if (!reachEnd) {
+        clearTimeout(streamTimeoutId);
         if (games.length > 0) {
           setSearchStatus({ state: 'success', message: '' });
         } else {
@@ -296,9 +324,10 @@ export function GameSearchDialog({ isOpen, onOpenChange, onSelectGame, onUploadI
 
       console.error("搜索失败:", error);
       
+      // 简化错误信息
       setSearchStatus({ 
         state: 'error', 
-        message: "搜索失败，请检查网络连接后重试" 
+        message: "搜索失败，请重试" 
       });
     } finally {
       // 只有在当前控制器仍然有效的情况下才清理状态

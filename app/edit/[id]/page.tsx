@@ -467,20 +467,9 @@ export default function EditFormPage() {
           ctx.moveTo(x, y)
           ctx.lineWidth = eraserSize
           ctx.lineCap = "round"
-          // Use destination-out composite operation for erasing
           ctx.globalCompositeOperation = "destination-out"
         }
       } else if (currentTool === "text") {
-        // 获取画布的实际尺寸和显示尺寸比例
-        const canvas = drawingCanvasRef.current
-        const rect = canvas.getBoundingClientRect()
-        const scaleX = canvas.width / rect.width
-        const scaleY = canvas.height / rect.height
-
-        // 计算实际点击位置
-        const x = (e.clientX - rect.left) * scaleX
-        const y = (e.clientY - rect.top) * scaleY
-
         setTextPosition({ x, y })
         setIsAddingText(true)
         setTimeout(() => {
@@ -498,9 +487,15 @@ export default function EditFormPage() {
         )
 
         if (clickedBlankArea) {
-          setClickedArea(clickedBlankArea)
-          // 不再直接调用fileInputRef.current?.click()，而是显示搜索对话框
-          setShowSearchDialog(true)
+          // 检查该区域是否已经有内容
+          const isAreaAlreadyFilled = isAreaFilled(clickedBlankArea);
+          
+          // 只有当区域未填充时，才设置clickedArea并打开搜索对话框
+          // 如果已经填充，可以提供替换选项或直接忽略
+          if (!isAreaAlreadyFilled || confirm("该区域已有内容，是否替换？")) {
+            setClickedArea(clickedBlankArea)
+            setShowSearchDialog(true)
+          }
         }
       }
     }
@@ -572,12 +567,42 @@ export default function EditFormPage() {
         )
 
         if (clickedBlankArea) {
-          setClickedArea(clickedBlankArea)
-          // 不再直接调用fileInputRef.current?.click()，而是显示搜索对话框
-          setShowSearchDialog(true)
+          // 检查该区域是否已经有内容
+          const isAreaAlreadyFilled = isAreaFilled(clickedBlankArea);
+          
+          // 只有当区域未填充时，才设置clickedArea并打开搜索对话框
+          // 如果已经填充，可以提供替换选项或直接忽略
+          if (!isAreaAlreadyFilled || confirm("该区域已有内容，是否替换？")) {
+            setClickedArea(clickedBlankArea)
+            setShowSearchDialog(true)
+          }
         }
       }
     }
+  }
+
+  // 检查区域是否已经填充内容
+  const isAreaFilled = (area: { x: number; y: number; width: number; height: number }): boolean => {
+    if (!canvasRef.current) return false;
+    
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return false;
+    
+    // 获取区域的图像数据
+    const imageData = ctx.getImageData(area.x, area.y, area.width, area.height);
+    const data = imageData.data;
+    
+    // 检查区域是否有非透明像素
+    // 每4个值代表一个像素(r,g,b,a)，alpha通道为0表示完全透明
+    for (let i = 3; i < data.length; i += 4) {
+      // 如果存在非透明像素，说明区域已填充
+      if (data[i] > 0) {
+        return true;
+      }
+    }
+    
+    return false;
   }
 
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -756,12 +781,20 @@ export default function EditFormPage() {
             }
             updateForm(updatedForm)
             setFormData(updatedForm)
+            
+            // 重置clickedArea状态，防止下次点击同一区域时发生冲突
+            setTimeout(() => {
+              setClickedArea(null)
+            }, 100)
           }
         }
         img.src = event.target.result
       }
     }
     reader.readAsDataURL(file)
+    
+    // 清空文件输入，以便能够再次选择相同的文件
+    e.target.value = ''
   }
 
   // 修改更新预览的函数
@@ -1102,9 +1135,19 @@ export default function EditFormPage() {
           }
           updateForm(updatedForm)
           setFormData(updatedForm)
+          
+          // 重置clickedArea状态，防止下次点击同一区域时发生冲突
+          setTimeout(() => {
+            setClickedArea(null)
+          }, 100)
         }
       }
       img.src = game.image
+    } else {
+      // 如果没有图片也重置clickedArea状态
+      setTimeout(() => {
+        setClickedArea(null)
+      }, 100)
     }
   }
 
