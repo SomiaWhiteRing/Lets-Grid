@@ -45,7 +45,7 @@ export async function GET(request: NextRequest) {
 
     // 设置请求超时
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
 
     try {
       // 请求原始图片
@@ -55,6 +55,7 @@ export async function GET(request: NextRequest) {
           "User-Agent": "LetsGrid/1.0",
           Referer: "https://bgm.tv/",
         },
+        cache: "no-store",
       });
 
       clearTimeout(timeoutId);

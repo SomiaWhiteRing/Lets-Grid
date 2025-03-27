@@ -73,6 +73,7 @@ export default function EditFormPage() {
   const [hoveredArea, setHoveredArea] = useState<{ x: number; y: number; width: number; height: number } | null>(null)
   const [isDragging, setIsDragging] = useState(false)
   const [showSearchDialog, setShowSearchDialog] = useState(false)
+  const [potentialClickArea, setPotentialClickArea] = useState<{ x: number; y: number; width: number; height: number } | null>(null)
 
   const loadForm = async () => {
     setIsLoading(true)
@@ -487,15 +488,8 @@ export default function EditFormPage() {
         )
 
         if (clickedBlankArea) {
-          // 检查该区域是否已经有内容
-          const isAreaAlreadyFilled = isAreaFilled(clickedBlankArea);
-          
-          // 只有当区域未填充时，才设置clickedArea并打开搜索对话框
-          // 如果已经填充，可以提供替换选项或直接忽略
-          if (!isAreaAlreadyFilled || confirm("该区域已有内容，是否替换？")) {
-            setClickedArea(clickedBlankArea)
-            setShowSearchDialog(true)
-          }
+          setClickedArea(clickedBlankArea)
+          setShowSearchDialog(true)
         }
       }
     }
@@ -559,23 +553,16 @@ export default function EditFormPage() {
         }, 100)
       }
     } else if (currentMode === "upload") {
-      // Check if clicked on a blank area
+      // 在触摸开始时，仅记录可能的点击区域，不立即打开弹窗
       if (formData?.blankAreas) {
-        // Find the clicked blank area
-        const clickedBlankArea = formData.blankAreas.find(
+        const potentialArea = formData.blankAreas.find(
           (area) => x >= area.x && x <= area.x + area.width && y >= area.y && y <= area.y + area.height,
         )
 
-        if (clickedBlankArea) {
-          // 检查该区域是否已经有内容
-          const isAreaAlreadyFilled = isAreaFilled(clickedBlankArea);
-          
-          // 只有当区域未填充时，才设置clickedArea并打开搜索对话框
-          // 如果已经填充，可以提供替换选项或直接忽略
-          if (!isAreaAlreadyFilled || confirm("该区域已有内容，是否替换？")) {
-            setClickedArea(clickedBlankArea)
-            setShowSearchDialog(true)
-          }
+        if (potentialArea) {
+          setPotentialClickArea(potentialArea)
+        } else {
+          setPotentialClickArea(null)
         }
       }
     }
@@ -660,7 +647,7 @@ export default function EditFormPage() {
     }
   }
 
-  // 处理触摸结束事件
+  // 添加touchend处理函数
   const handleTouchEnd = (e: React.TouchEvent<HTMLCanvasElement>) => {
     // e.preventDefault()
     if (isDrawing && (currentTool === "draw" || currentTool === "eraser")) {
@@ -675,6 +662,11 @@ export default function EditFormPage() {
       }
 
       saveDrawingState()
+    } else if (currentMode === "upload" && potentialClickArea) {
+      // 在触摸结束时触发弹窗
+      setClickedArea(potentialClickArea)
+      setShowSearchDialog(true)
+      setPotentialClickArea(null) // 重置潜在点击区域
     }
   }
 
@@ -1073,83 +1065,195 @@ export default function EditFormPage() {
     
     // 如果游戏有图片，加载图片到画布
     if (game.image) {
-      const img = new Image()
-      img.crossOrigin = "anonymous"
-      img.onload = () => {
-        const canvas = canvasRef.current
-        if (!canvas) return
-
-        const ctx = canvas.getContext("2d")
-        if (!ctx) return
-
-        const area = clickedArea
-
-        // Clear the area first to prevent image stacking
-        ctx.clearRect(area.x, area.y, area.width, area.height)
-
-        if (adaptiveUpload) {
-          // Crop and scale the image to fill the area completely
-          const sourceAspect = img.width / img.height
-          const targetAspect = area.width / area.height
-
-          let sx = 0,
-            sy = 0,
-            sWidth = img.width,
-            sHeight = img.height
-
-          if (sourceAspect > targetAspect) {
-            // Image is wider than the target area
-            sWidth = img.height * targetAspect
-            sx = (img.width - sWidth) / 2
-          } else {
-            // Image is taller than the target area
-            sHeight = img.width / targetAspect
-            sy = (img.height - sHeight) / 2
+      // 使用代理获取图片
+      const proxyUrl = `/api/image-proxy?url=${encodeURIComponent(game.image)}`;
+      
+      // 设置fetch的超时控制器
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10秒超时
+      
+      // 使用fetch获取图片blob
+      fetch(proxyUrl, {
+        signal: controller.signal,
+        cache: 'no-store' // 不使用缓存，确保每次都获取最新的图片
+      })
+        .then(response => {
+          clearTimeout(timeoutId); // 清除超时
+          if (!response.ok) {
+            throw new Error('Failed to fetch image');
           }
-
-          // Draw the cropped image to fill the area
-          ctx.drawImage(img, sx, sy, sWidth, sHeight, area.x, area.y, area.width, area.height)
-        } else {
-          // Scale the image to fit within the area while maintaining aspect ratio
-          const scale = Math.min(area.width / img.width, area.height / img.height)
-          const newWidth = img.width * scale
-          const newHeight = img.height * scale
-
-          // Center the image in the blank area
-          const x = area.x + (area.width - newWidth) / 2
-          const y = area.y + (area.height - newHeight) / 2
-
-          ctx.drawImage(img, x, y, newWidth, newHeight)
-        }
-
-        // Update the base image
-        const updatedBaseImage = canvas.toDataURL("image/png")
-
-        // Save the updated form
-        if (formData) {
-          const updatedForm = {
-            ...formData,
-            canvasData: updatedBaseImage,
-            timestamp: Date.now(),
-            size: new Blob([updatedBaseImage]).size,
-          }
-          updateForm(updatedForm)
-          setFormData(updatedForm)
+          return response.blob();
+        })
+        .then(blob => {
+          // 创建blob URL
+          const blobUrl = URL.createObjectURL(blob);
           
-          // 重置clickedArea状态，防止下次点击同一区域时发生冲突
-          setTimeout(() => {
-            setClickedArea(null)
-          }, 100)
-        }
-      }
-      img.src = game.image
+          // 加载图片到canvas
+          const img = new Image();
+          img.crossOrigin = "anonymous";
+          img.onload = () => {
+            const canvas = canvasRef.current;
+            if (!canvas || !clickedArea) return;
+
+            const ctx = canvas.getContext("2d");
+            if (!ctx) return;
+
+            const area = clickedArea;
+
+            // 清除区域
+            ctx.clearRect(area.x, area.y, area.width, area.height);
+
+            // 设置背景色为白色
+            ctx.fillStyle = "white";
+            ctx.fillRect(area.x, area.y, area.width, area.height);
+
+            // 使用adaptiveUpload选项进行图片处理，与handleFileChange保持一致
+            if (adaptiveUpload) {
+              // 裁剪和缩放图片以完全填充区域
+              const sourceAspect = img.width / img.height;
+              const targetAspect = area.width / area.height;
+
+              let sx = 0,
+                sy = 0,
+                sWidth = img.width,
+                sHeight = img.height;
+
+              if (sourceAspect > targetAspect) {
+                // 图片比目标区域更宽
+                sWidth = img.height * targetAspect;
+                sx = (img.width - sWidth) / 2;
+              } else {
+                // 图片比目标区域更高
+                sHeight = img.width / targetAspect;
+                sy = (img.height - sHeight) / 2;
+              }
+
+              // 绘制裁剪后的图片以填充区域
+              ctx.drawImage(img, sx, sy, sWidth, sHeight, area.x, area.y, area.width, area.height);
+            } else {
+              // 缩放图片以适应区域，保持纵横比
+              const scale = Math.min(area.width / img.width, area.height / img.height);
+              const newWidth = img.width * scale;
+              const newHeight = img.height * scale;
+
+              // 在空白区域中居中图片
+              const x = area.x + (area.width - newWidth) / 2;
+              const y = area.y + (area.height - newHeight) / 2;
+
+              ctx.drawImage(img, x, y, newWidth, newHeight);
+            }
+
+            // 更新base图像
+            const updatedBaseImage = canvas.toDataURL("image/png");
+
+            // 保存更新后的表单
+            if (formData) {
+              const updatedForm = {
+                ...formData,
+                canvasData: updatedBaseImage,
+                timestamp: Date.now(),
+                size: new Blob([updatedBaseImage]).size,
+              };
+              updateForm(updatedForm);
+              setFormData(updatedForm);
+              
+              // 重置clickedArea状态，防止下次点击同一区域时发生冲突
+              setTimeout(() => {
+                setClickedArea(null);
+              }, 100);
+            }
+            
+            // 释放blob URL以避免内存泄漏
+            URL.revokeObjectURL(blobUrl);
+          };
+          img.src = blobUrl;
+        })
+        .catch(error => {
+          clearTimeout(timeoutId); // 确保超时定时器被清除
+          console.error("Error loading game image:", error);
+          
+          if (error.name === 'AbortError') {
+            console.log('Image fetch timed out, retrying...');
+            // 对于超时错误，可以考虑使用不同的代理路由或直接使用原始URL作为备选
+            // 这里使用原始URL作为备用方案
+            const img = new Image();
+            img.crossOrigin = "anonymous";
+            img.onload = () => {
+              // 几乎相同的处理逻辑，但直接使用原始URL
+              const canvas = canvasRef.current;
+              if (!canvas || !clickedArea) return;
+
+              const ctx = canvas.getContext("2d");
+              if (!ctx) return;
+
+              // 使用之前的处理逻辑，更新画布
+              const area = clickedArea;
+              ctx.clearRect(area.x, area.y, area.width, area.height);
+              ctx.fillStyle = "white";
+              ctx.fillRect(area.x, area.y, area.width, area.height);
+
+              if (adaptiveUpload) {
+                const sourceAspect = img.width / img.height;
+                const targetAspect = area.width / area.height;
+                let sx = 0, sy = 0, sWidth = img.width, sHeight = img.height;
+
+                if (sourceAspect > targetAspect) {
+                  sWidth = img.height * targetAspect;
+                  sx = (img.width - sWidth) / 2;
+                } else {
+                  sHeight = img.width / targetAspect;
+                  sy = (img.height - sHeight) / 2;
+                }
+
+                ctx.drawImage(img, sx, sy, sWidth, sHeight, area.x, area.y, area.width, area.height);
+              } else {
+                const scale = Math.min(area.width / img.width, area.height / img.height);
+                const newWidth = img.width * scale;
+                const newHeight = img.height * scale;
+                const x = area.x + (area.width - newWidth) / 2;
+                const y = area.y + (area.height - newHeight) / 2;
+                ctx.drawImage(img, x, y, newWidth, newHeight);
+              }
+
+              const updatedBaseImage = canvas.toDataURL("image/png");
+              if (formData) {
+                const updatedForm = {
+                  ...formData,
+                  canvasData: updatedBaseImage,
+                  timestamp: Date.now(),
+                  size: new Blob([updatedBaseImage]).size,
+                };
+                updateForm(updatedForm);
+                setFormData(updatedForm);
+                
+                setTimeout(() => {
+                  setClickedArea(null);
+                }, 100);
+              }
+            };
+            // 使用原始URL作为备选
+            if (game.image) {
+              img.src = game.image;
+            } else {
+              // 如果图片URL不存在，直接重置状态
+              setTimeout(() => {
+                setClickedArea(null);
+              }, 100);
+            }
+          } else {
+            // 其他错误时重置状态
+            setTimeout(() => {
+              setClickedArea(null);
+            }, 100);
+          }
+        });
     } else {
       // 如果没有图片也重置clickedArea状态
       setTimeout(() => {
-        setClickedArea(null)
-      }, 100)
+        setClickedArea(null);
+      }, 100);
     }
-  }
+  };
 
   const renderDrawingToolbar = () => {
     if (currentMode !== "draw") return null

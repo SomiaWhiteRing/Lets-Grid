@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { GameSearchResult } from "@/lib/types";
+import { GameSearchResult, CHARACTER_TYPE, PERSON_TYPE } from "@/lib/types";
 
 // 默认的封面URL前缀
 const IMAGE_PREFIX = "https://lain.bgm.tv/pic/cover/";
+// 角色图片前缀
+const CHARACTER_PREFIX = "https://lain.bgm.tv/pic/crt/";
+// 人物图片前缀
+const PERSON_PREFIX = "https://lain.bgm.tv/pic/photo/";
 
 // 请求重试函数
 async function fetchWithRetry(
@@ -36,6 +40,8 @@ export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
   const query = searchParams.get("q");
   const type = searchParams.get("type") ?? "4"; // 默认搜索游戏类型
+  // 新增：搜索模式参数，默认为作品搜索
+  const mode = searchParams.get("mode");
 
   // 检查是否是预热请求
   const isPreheating = query === "test" && searchParams.has("preheating");
@@ -70,72 +76,80 @@ export async function GET(request: NextRequest) {
 
   // 发送游戏数据到客户端
   const sendGameData = async (game: GameSearchResult) => {
-    // 先发送游戏开始加载的信息
-    await writer.write(
-      encoder.encode(JSON.stringify({ type: "gameStart", game }) + "\n")
-    );
+    try {
+      // 先发送游戏开始加载的信息（使用原始URL，不使用代理）
+      await writer.write(
+        encoder.encode(JSON.stringify({ type: "gameStart", game }) + "\n")
+      );
 
-    // 如果没有图片，尝试获取图片
-    if (!game.image && game.id) {
-      try {
-        // 构造原始图片URL
-        const originalImageUrl = `${IMAGE_PREFIX}l/${game.id}.jpg`;
-        // 使用代理图片URL
-        const proxyImageUrl = getProxyImageUrl(originalImageUrl);
+      // 如果没有图片，尝试获取图片
+      if (!game.image && game.id) {
+        try {
+          // 构造原始图片URL（根据搜索模式选择不同的图片前缀）
+          let imagePrefix = IMAGE_PREFIX;
+          if (mode === "character") {
+            imagePrefix = CHARACTER_PREFIX;
+          } else if (mode === "person") {
+            imagePrefix = PERSON_PREFIX;
+          }
 
-        // 发送完整游戏信息（包括图片）
+          const originalImageUrl = `${imagePrefix}l/${game.id}.jpg`;
+
+          // 保存原始URL，但不转换为代理URL（仅在UI渲染时使用原始URL）
+          await writer.write(
+            encoder.encode(
+              JSON.stringify({
+                type: "gameComplete",
+                game: {
+                  ...game,
+                  image: originalImageUrl,
+                  originalImage: originalImageUrl, // 添加原始图片URL字段
+                },
+              }) + "\n"
+            )
+          );
+        } catch (error) {
+          console.error(`获取游戏 ${game.id} 图片失败:`, error);
+          await writer.write(
+            encoder.encode(
+              JSON.stringify({
+                type: "gameError",
+                gameId: game.id,
+                error: "获取图片失败",
+              }) + "\n"
+            )
+          );
+        }
+      } else if (game.image) {
+        // 已有图片的情况，保存原始URL
         await writer.write(
           encoder.encode(
             JSON.stringify({
               type: "gameComplete",
               game: {
                 ...game,
-                image: proxyImageUrl,
+                originalImage: game.image, // 添加原始图片URL字段
               },
             }) + "\n"
           )
         );
-      } catch (error) {
-        console.error(`获取游戏 ${game.id} 图片失败:`, error);
-        await writer.write(
-          encoder.encode(
-            JSON.stringify({
-              type: "gameError",
-              gameId: game.id,
-              error: "获取图片失败",
-            }) + "\n"
-          )
-        );
-      }
-    } else if (game.image) {
-      // 已有图片的情况下，将原始图片URL转换为代理URL
-      try {
-        // 使用代理图片URL
-        const proxyImageUrl = getProxyImageUrl(game.image);
-
-        // 发送完整游戏信息（包括代理图片URL）
-        await writer.write(
-          encoder.encode(
-            JSON.stringify({
-              type: "gameComplete",
-              game: {
-                ...game,
-                image: proxyImageUrl,
-              },
-            }) + "\n"
-          )
-        );
-      } catch (error) {
-        console.error(`处理游戏 ${game.id} 图片代理失败:`, error);
-        // 如果代理URL处理失败，仍然发送原始数据
+      } else {
+        // 没有图片的情况，直接发送完整信息
         await writer.write(
           encoder.encode(JSON.stringify({ type: "gameComplete", game }) + "\n")
         );
       }
-    } else {
-      // 没有图片的情况，直接发送完整信息
+    } catch (error) {
+      console.error(`处理游戏 ${game.id} 数据失败:`, error);
+      // 发送错误信息
       await writer.write(
-        encoder.encode(JSON.stringify({ type: "gameComplete", game }) + "\n")
+        encoder.encode(
+          JSON.stringify({
+            type: "gameError",
+            gameId: game.id,
+            error: "处理游戏数据失败",
+          }) + "\n"
+        )
       );
     }
   };
@@ -160,18 +174,38 @@ export async function GET(request: NextRequest) {
       }
 
       // 构建Bangumi API URL
-      const apiUrl = `https://api.bgm.tv/search/subject/${encodeURIComponent(
-        query
-      )}?type=${type}&responseGroup=small`;
+      let apiUrl;
+      let apiMethod = "GET";
+      let apiBody;
+
+      if (mode === "character" || mode === "person") {
+        // 使用v0 API的角色或人物搜索
+        apiUrl = `https://api.bgm.tv/v0/search/${
+          mode === "character" ? "characters" : "persons"
+        }`;
+        apiMethod = "POST";
+        apiBody = JSON.stringify({
+          keyword: query,
+          filter: {},
+        });
+      } else {
+        // 默认使用旧版API搜索作品
+        apiUrl = `https://api.bgm.tv/search/subject/${encodeURIComponent(
+          query
+        )}?type=${type}&responseGroup=small`;
+      }
 
       // 使用重试机制发送请求
       const response = await fetchWithRetry(
         apiUrl,
         {
+          method: apiMethod,
           headers: {
             "User-Agent":
               "LetsGrid/1.0 (https://github.com/username/lets-grid)",
+            "Content-Type": "application/json",
           },
+          body: apiBody,
           // 设置较短的超时时间
           signal: AbortSignal.timeout(8000),
         },
@@ -184,34 +218,88 @@ export async function GET(request: NextRequest) {
 
       const data = await response.json();
 
-      if (data && data.list && Array.isArray(data.list)) {
-        // 发送总结果数
-        await writer.write(
-          encoder.encode(
-            JSON.stringify({ type: "init", total: data.results }) + "\n"
-          )
-        );
+      if (mode === "character" || mode === "person") {
+        // 处理角色/人物搜索结果格式
+        if (data && data.data && Array.isArray(data.data)) {
+          // 发送总结果数
+          await writer.write(
+            encoder.encode(
+              JSON.stringify({
+                type: "init",
+                total: data.total || data.data.length,
+              }) + "\n"
+            )
+          );
 
-        // 处理每个游戏的信息
-        for (const item of data.list) {
-          const game: GameSearchResult = {
-            id: item.id,
-            name: item.name_cn || item.name,
-            info: item.summary,
-            type: item.type,
-            image: item.images?.common || item.images?.medium || null,
-          };
+          // 处理每个角色/人物的信息
+          for (const item of data.data) {
+            // 基本信息
+            const characterId = item.id;
+            const name =
+              mode === "character"
+                ? item.name || (item.names ? item.names[0] : "")
+                : item.name ||
+                  (item.names && item.names.zh ? item.names.zh : "");
 
-          await sendGameData(game);
-        }
+            // 构造图片URL（角色用大图，人物用小图）
+            const imageSize = mode === "character" ? "l" : "m";
+            // 不再将原始URL转为代理URL
+            const imageUrl =
+              item.images?.large ||
+              (mode === "character"
+                ? `${CHARACTER_PREFIX}${imageSize}/${characterId}.jpg`
+                : `${PERSON_PREFIX}${imageSize}/${characterId}.jpg`);
 
-        if (data.list.length === 0) {
-          await sendEndMessage("未找到相关内容");
+            const game: GameSearchResult = {
+              id: characterId,
+              name: name,
+              image: imageUrl, // 使用原始URL，不转代理
+              originalImage: imageUrl, // 添加原始图片URL字段
+              type: mode === "character" ? CHARACTER_TYPE : PERSON_TYPE,
+            };
+
+            await sendGameData(game);
+          }
+
+          if (data.data.length === 0) {
+            await sendEndMessage("未找到相关角色");
+          } else {
+            await sendEndMessage();
+          }
         } else {
-          await sendEndMessage();
+          await sendEndMessage("未找到相关角色");
         }
       } else {
-        await sendEndMessage("未找到相关内容");
+        // 处理旧版API的作品搜索结果格式
+        if (data && data.list && Array.isArray(data.list)) {
+          // 发送总结果数
+          await writer.write(
+            encoder.encode(
+              JSON.stringify({ type: "init", total: data.results }) + "\n"
+            )
+          );
+
+          // 处理每个作品的信息
+          for (const item of data.list) {
+            const game: GameSearchResult = {
+              id: item.id,
+              name: item.name_cn || item.name,
+              info: item.summary,
+              type: item.type,
+              image: item.images?.common || item.images?.medium || null,
+            };
+
+            await sendGameData(game);
+          }
+
+          if (data.list.length === 0) {
+            await sendEndMessage("未找到相关内容");
+          } else {
+            await sendEndMessage();
+          }
+        } else {
+          await sendEndMessage("未找到相关内容");
+        }
       }
     } catch (error) {
       console.error("搜索失败:", error);
@@ -249,8 +337,7 @@ export async function GET(request: NextRequest) {
   // 返回流式响应
   return new Response(stream.readable, {
     headers: {
-      "Content-Type": "application/json",
-      "Transfer-Encoding": "chunked",
+      "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
       Connection: "keep-alive",
     },

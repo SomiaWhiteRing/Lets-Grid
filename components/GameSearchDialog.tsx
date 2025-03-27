@@ -5,7 +5,7 @@ import NextImage from "next/image"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { Gamepad2, Loader2, AlertCircle, Search, RefreshCw, Info, Upload } from "lucide-react"
+import { Gamepad2, Loader2, AlertCircle, Search, RefreshCw, Info, Upload, User, UsersRound, BookOpen, Tv, Music, Film } from "lucide-react"
 import {
   Tooltip,
   TooltipContent,
@@ -19,7 +19,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { GameSearchResult, SearchType } from "@/lib/types"
+import { GameSearchResult, SearchType, CHARACTER_TYPE, PERSON_TYPE } from "@/lib/types"
 
 interface GameSearchDialogProps {
   isOpen: boolean
@@ -37,6 +37,11 @@ type SearchStatus = {
 };
 
 /**
+ * 搜索模式类型 - 决定是搜索作品还是人物
+ */
+type SearchMode = 'subject' | 'character';
+
+/**
  * 游戏搜索对话框组件
  */
 export function GameSearchDialog({ isOpen, onOpenChange, onSelectGame, onUploadImage }: GameSearchDialogProps) {
@@ -51,6 +56,10 @@ export function GameSearchDialog({ isOpen, onOpenChange, onSelectGame, onUploadI
   const [totalResults, setTotalResults] = useState<number>(0)
   // 添加搜索类型状态
   const [searchType, setSearchType] = useState<SearchType>(4) // 默认搜索游戏
+  // 添加搜索模式状态 - 作品或人物
+  const [searchMode, setSearchMode] = useState<SearchMode>('subject')
+  // 添加人物类型状态 - 虚拟角色或现实人物
+  const [characterType, setCharacterType] = useState<'character' | 'person'>('character')
   
   // 用于存储搜索请求的 AbortController，以便能取消进行中的请求
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -99,10 +108,31 @@ export function GameSearchDialog({ isOpen, onOpenChange, onSelectGame, onUploadI
   // 处理搜索类型切换
   const handleSearchTypeChange = (value: string) => {
     setSearchType(Number(value) as SearchType);
-    // 如果已经有搜索词，自动重新搜索
-    if (searchTerm.trim()) {
-      setTimeout(() => searchGames(), 100);
-    }
+    // 清空搜索结果，表明发生了切换
+    setSearchResults([]);
+    setTotalResults(0);
+    setSearchStatus({ state: 'idle', message: "输入名称开始搜索" });
+    // 不再自动执行搜索
+  };
+
+  // 处理搜索模式切换
+  const handleSearchModeChange = (value: string) => {
+    setSearchMode(value as SearchMode);
+    // 清空搜索结果
+    setSearchResults([]);
+    setTotalResults(0);
+    setSearchStatus({ state: 'idle', message: "输入名称开始搜索" });
+    // 不再自动执行搜索
+  };
+
+  // 处理角色类型切换
+  const handleCharacterTypeChange = (value: string) => {
+    setCharacterType(value as 'character' | 'person');
+    // 清空搜索结果
+    setSearchResults([]);
+    setTotalResults(0);
+    setSearchStatus({ state: 'idle', message: "输入名称开始搜索" });
+    // 不再自动执行搜索
   };
 
   // 搜索游戏 - 使用流式响应
@@ -153,7 +183,13 @@ export function GameSearchDialog({ isOpen, onOpenChange, onSelectGame, onUploadI
 
     try {
       // 构建API端点
-      const apiEndpoint = `/api/bangumi-search?q=${encodeURIComponent(term)}&type=${searchType}`;
+      let apiEndpoint;
+      if (searchMode === 'subject') {
+        apiEndpoint = `/api/bangumi-search?q=${encodeURIComponent(term)}&type=${searchType}`;
+      } else {
+        // 根据角色类型构建不同的API端点
+        apiEndpoint = `/api/bangumi-search?q=${encodeURIComponent(term)}&mode=${characterType}`;
+      }
       
       // 使用当前 AbortController 的信号
       const response = await fetch(apiEndpoint, {
@@ -283,7 +319,7 @@ export function GameSearchDialog({ isOpen, onOpenChange, onSelectGame, onUploadI
                     } else {
                       setSearchStatus({ 
                         state: 'no-results', 
-                        message: data.message || "未找到相关内容" 
+                        message: data.message || "未找到相关作品" 
                       });
                     }
                     break;
@@ -350,6 +386,30 @@ export function GameSearchDialog({ isOpen, onOpenChange, onSelectGame, onUploadI
     }
   }
 
+  // 根据当前搜索类型或模式返回适当的图标
+  const getIconByType = () => {
+    if (searchMode === 'character') {
+      return characterType === 'character' ? 
+        <User className="h-8 w-8 mb-2 opacity-50" /> : 
+        <UsersRound className="h-8 w-8 mb-2 opacity-50" />;
+    }
+    
+    switch (searchType) {
+      case 1: // 书籍
+        return <BookOpen className="h-8 w-8 mb-2 opacity-50" />;
+      case 2: // 动画
+        return <Tv className="h-8 w-8 mb-2 opacity-50" />;
+      case 3: // 音乐
+        return <Music className="h-8 w-8 mb-2 opacity-50" />;
+      case 4: // 游戏
+        return <Gamepad2 className="h-8 w-8 mb-2 opacity-50" />;
+      case 6: // 影视
+        return <Film className="h-8 w-8 mb-2 opacity-50" />;
+      default:
+        return <Gamepad2 className="h-8 w-8 mb-2 opacity-50" />;
+    }
+  };
+
   // 渲染搜索状态UI
   const renderSearchStatus = () => {
     switch (searchStatus.state) {
@@ -386,7 +446,7 @@ export function GameSearchDialog({ isOpen, onOpenChange, onSelectGame, onUploadI
       case 'no-results':
         return (
           <div className="flex flex-col items-center justify-center py-10 text-gray-500">
-            <Gamepad2 className="h-8 w-8 mb-2 opacity-50" />
+            {getIconByType()}
             <p>{searchStatus.message}</p>
             <p className="text-sm mt-2">请尝试不同的关键词</p>
           </div>
@@ -425,8 +485,17 @@ export function GameSearchDialog({ isOpen, onOpenChange, onSelectGame, onUploadI
       case 2: return '动画';
       case 3: return '音乐';
       case 4: return '游戏';
-      case 6: return '三次元';
+      case 6: return '影视';
       default: return '游戏';
+    }
+  };
+
+  // 获取当前搜索的目标类型名称
+  const getSearchTargetName = (): string => {
+    if (searchMode === 'subject') {
+      return getTypeName(searchType);
+    } else {
+      return characterType === 'character' ? '虚拟角色' : '现实人物';
     }
   };
 
@@ -434,39 +503,47 @@ export function GameSearchDialog({ isOpen, onOpenChange, onSelectGame, onUploadI
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
       <DialogContent className="w-[95vw] max-h-[90vh] overflow-y-auto sm:max-w-md md:max-w-lg lg:max-w-xl">
         <DialogHeader>
-          <DialogTitle>搜索内容</DialogTitle>
+          <DialogTitle>Bangumi搜索</DialogTitle>
         </DialogHeader>
         
         <div className="mb-4">
-          <div className="flex items-center mb-2">
-            <span className="text-sm text-gray-500 mr-2">内容类型：</span>
-            <Select value={String(searchType)} onValueChange={handleSearchTypeChange}>
-              <SelectTrigger className="w-[180px]">
-                <SelectValue placeholder="选择内容类型" />
+          <div className="flex items-center gap-2 mb-2">
+            {/* 搜索模式选择：作品或人物 */}
+            <Select value={searchMode} onValueChange={handleSearchModeChange}>
+              <SelectTrigger className="w-[100px]">
+                <SelectValue placeholder="搜索模式" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="4">游戏</SelectItem>
-                <SelectItem value="1">书籍</SelectItem>
-                <SelectItem value="2">动画</SelectItem>
-                <SelectItem value="3">音乐</SelectItem>
-                <SelectItem value="6">三次元</SelectItem>
+                <SelectItem value="subject">作品</SelectItem>
+                <SelectItem value="character">人物</SelectItem>
               </SelectContent>
             </Select>
             
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span 
-                    className="inline-flex items-center justify-center cursor-help ml-2"
-                  >
-                    <Info className="h-4 w-4 text-gray-500 hover:text-gray-700" />
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent sideOffset={5} align="center">
-                  <p>使用Bangumi数据库进行搜索，<br />填表格处将显示选择的封面。</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+            {/* 根据搜索模式显示不同的选择器 */}
+            {searchMode === 'subject' ? (
+              <Select value={String(searchType)} onValueChange={handleSearchTypeChange}>
+                <SelectTrigger className="w-[180px]">
+                  <SelectValue placeholder="选择作品类型" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="4">游戏</SelectItem>
+                  <SelectItem value="1">书籍</SelectItem>
+                  <SelectItem value="2">动画</SelectItem>
+                  <SelectItem value="3">音乐</SelectItem>
+                  <SelectItem value="6">影视</SelectItem>
+                </SelectContent>
+              </Select>
+            ) : (
+              <Select value={characterType} onValueChange={handleCharacterTypeChange}>
+                <SelectTrigger className="w-[180px]">
+                  <SelectValue placeholder="选择人物类型" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="character">虚拟角色</SelectItem>
+                  <SelectItem value="person">现实人物</SelectItem>
+                </SelectContent>
+              </Select>
+            )}
           </div>
           
           <div className="flex gap-2">
@@ -474,7 +551,7 @@ export function GameSearchDialog({ isOpen, onOpenChange, onSelectGame, onUploadI
               <Input
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder={`输入${getTypeName(searchType)}名称`}
+                placeholder={`输入${getSearchTargetName()}名称`}
                 onKeyDown={handleKeyDown}
                 disabled={isLoading}
                 className="pr-8"
@@ -518,12 +595,18 @@ export function GameSearchDialog({ isOpen, onOpenChange, onSelectGame, onUploadI
                   <div className="relative w-full h-0 pb-[133.33%] rounded overflow-hidden bg-gray-100">
                     {game.image ? (
                       <NextImage 
-                        src={game.image} 
+                        src={game.image}
                         alt={game.name} 
                         fill 
                         className="object-cover"
                         sizes="(max-width: 768px) 40vw, 20vw"
                         loading="lazy"
+                        onError={(e) => {
+                          // 图片加载失败时处理，显示默认图标
+                          const imgElement = e.currentTarget as HTMLImageElement;
+                          imgElement.style.display = 'none'; // 隐藏失败的图片
+                          // 不需要在这里替换，因为我们有备用内容显示
+                        }}
                       />
                     ) : (
                       <div className="absolute inset-0 flex items-center justify-center">
