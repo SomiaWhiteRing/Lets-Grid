@@ -101,7 +101,7 @@ export default function EditFormPage() {
 
         // Analyze blank areas if not already done
         if (!form.blankAreas || form.blankAreas.length === 0) {
-          const areas = await detectBlankAreas(form.imageData, true) // Pass true for higher tolerance
+          const areas = await detectBlankAreas(form.imageData)
           const updatedForm = {
             ...form,
             blankAreas: areas,
@@ -1066,95 +1066,114 @@ export default function EditFormPage() {
 
   // 处理选择游戏
   const handleSelectGame = (game: GameSearchResult) => {
-    if (!canvasRef.current || !clickedArea) return
-    
+    if (!canvasRef.current || !clickedArea) return;
+
     // 关闭搜索对话框
-    setShowSearchDialog(false)
-    
-    // 如果游戏有图片，加载图片到画布
+    setShowSearchDialog(false);
+
+    // 如果游戏有图片，尝试加载
     if (game.image) {
-      // 使用代理获取图片
       const proxyUrl = `/api/image-proxy?url=${encodeURIComponent(game.image)}`;
-      
-      // 设置fetch的超时控制器
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10秒超时
-      
-      // 使用fetch获取图片blob
-      fetch(proxyUrl, {
-        signal: controller.signal,
-        cache: 'no-store' // 不使用缓存，确保每次都获取最新的图片
-      })
-        .then(response => {
-          clearTimeout(timeoutId); // 清除超时
+      const maxRetries = 2; // 最多重试2次 (总共尝试1 + 2 = 3次)
+      const retryDelay = 1000; // 重试间隔1秒
+
+      // --- 定义一个可重试的 fetch 函数 ---
+      const fetchImageWithRetry = async (url: string, attempt = 1): Promise<Blob> => {
+        console.log(`Attempt ${attempt} to fetch image via proxy: ${url}`);
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => {
+            console.warn(`Attempt ${attempt} timed out.`);
+            controller.abort();
+        }, 10000); // 10秒超时
+
+        try {
+          const response = await fetch(url, {
+            signal: controller.signal,
+            cache: 'no-store', // 不使用缓存，确保每次都尝试获取
+          });
+          clearTimeout(timeoutId); // 清除超时定时器
+
           if (!response.ok) {
-            throw new Error('Failed to fetch image');
+            // 如果HTTP状态码表示错误 (e.g., 404, 500)
+            throw new Error(`Proxy fetch failed with status: ${response.status}`);
           }
-          return response.blob();
-        })
+
+          // 成功获取，返回 blob
+          return await response.blob();
+
+        } catch (error: any) {
+          clearTimeout(timeoutId); // 确保清除超时定时器
+
+          // 检查是否是中止错误(超时) 或 其他网络相关错误
+          if (attempt < (maxRetries + 1)) {
+              console.error(`Attempt ${attempt} failed:`, error.message);
+              console.log(`Retrying in ${retryDelay / 1000} seconds...`);
+              // 等待一段时间后重试
+              await new Promise(resolve => setTimeout(resolve, retryDelay));
+              return fetchImageWithRetry(url, attempt + 1); // 递归调用进行重试
+          } else {
+              // 重试次数已用尽
+              console.error("Max retries reached. Failed to fetch image via proxy.", error);
+              throw new Error("Failed to fetch image after multiple retries."); // 抛出最终错误
+          }
+        }
+      };
+      // --- 重试 fetch 函数定义结束 ---
+
+
+      // --- 调用带重试的 fetch ---
+      fetchImageWithRetry(proxyUrl)
         .then(blob => {
-          // 创建blob URL
+          // --- 成功获取 Blob 后的处理逻辑 ---
           const blobUrl = URL.createObjectURL(blob);
-          
-          // 加载图片到canvas
           const img = new Image();
-          img.crossOrigin = "anonymous";
+          img.crossOrigin = "anonymous"; // 虽然是 blob URL，习惯性加上
+
           img.onload = () => {
             const canvas = canvasRef.current;
-            if (!canvas || !clickedArea) return;
+            // 确保 canvas 和 clickedArea 仍然有效
+            if (!canvas || !clickedArea) {
+                URL.revokeObjectURL(blobUrl); // 清理
+                return;
+            }
 
             const ctx = canvas.getContext("2d");
-            if (!ctx) return;
+            if (!ctx) {
+                URL.revokeObjectURL(blobUrl); // 清理
+                return;
+            }
 
             const area = clickedArea;
 
-            // 清除区域
+            // --- 绘制逻辑 (与原来保持一致) ---
             ctx.clearRect(area.x, area.y, area.width, area.height);
-
-            // 设置背景色为白色
             ctx.fillStyle = "white";
             ctx.fillRect(area.x, area.y, area.width, area.height);
 
-            // 使用adaptiveUpload选项进行图片处理，与handleFileChange保持一致
             if (adaptiveUpload) {
-              // 裁剪和缩放图片以完全填充区域
               const sourceAspect = img.width / img.height;
               const targetAspect = area.width / area.height;
-
-              let sx = 0,
-                sy = 0,
-                sWidth = img.width,
-                sHeight = img.height;
-
+              let sx = 0, sy = 0, sWidth = img.width, sHeight = img.height;
               if (sourceAspect > targetAspect) {
-                // 图片比目标区域更宽
                 sWidth = img.height * targetAspect;
                 sx = (img.width - sWidth) / 2;
               } else {
-                // 图片比目标区域更高
                 sHeight = img.width / targetAspect;
                 sy = (img.height - sHeight) / 2;
               }
-
-              // 绘制裁剪后的图片以填充区域
               ctx.drawImage(img, sx, sy, sWidth, sHeight, area.x, area.y, area.width, area.height);
             } else {
-              // 缩放图片以适应区域，保持纵横比
               const scale = Math.min(area.width / img.width, area.height / img.height);
               const newWidth = img.width * scale;
               const newHeight = img.height * scale;
-
-              // 在空白区域中居中图片
               const x = area.x + (area.width - newWidth) / 2;
               const y = area.y + (area.height - newHeight) / 2;
-
               ctx.drawImage(img, x, y, newWidth, newHeight);
             }
+            // --- 绘制逻辑结束 ---
 
-            // 更新base图像
+            // 更新 base 图像并保存
             const updatedBaseImage = canvas.toDataURL("image/png");
-
-            // 保存更新后的表单
             if (formData) {
               const updatedForm = {
                 ...formData,
@@ -1164,105 +1183,52 @@ export default function EditFormPage() {
               };
               updateForm(updatedForm);
               setFormData(updatedForm);
-              
-              // 重置clickedArea状态，防止下次点击同一区域时发生冲突
-              setTimeout(() => {
-                setClickedArea(null);
-              }, 100);
             }
-            
-            // 释放blob URL以避免内存泄漏
+
+            // 清理 blob URL
             URL.revokeObjectURL(blobUrl);
-          };
-          img.src = blobUrl;
-        })
-        .catch(error => {
-          clearTimeout(timeoutId); // 确保超时定时器被清除
-          console.error("Error loading game image:", error);
-          
-          if (error.name === 'AbortError') {
-            console.log('Image fetch timed out, retrying...');
-            // 对于超时错误，可以考虑使用不同的代理路由或直接使用原始URL作为备选
-            // 这里使用原始URL作为备用方案
-            const img = new Image();
-            img.crossOrigin = "anonymous";
-            img.onload = () => {
-              // 几乎相同的处理逻辑，但直接使用原始URL
-              const canvas = canvasRef.current;
-              if (!canvas || !clickedArea) return;
 
-              const ctx = canvas.getContext("2d");
-              if (!ctx) return;
-
-              // 使用之前的处理逻辑，更新画布
-              const area = clickedArea;
-              ctx.clearRect(area.x, area.y, area.width, area.height);
-              ctx.fillStyle = "white";
-              ctx.fillRect(area.x, area.y, area.width, area.height);
-
-              if (adaptiveUpload) {
-                const sourceAspect = img.width / img.height;
-                const targetAspect = area.width / area.height;
-                let sx = 0, sy = 0, sWidth = img.width, sHeight = img.height;
-
-                if (sourceAspect > targetAspect) {
-                  sWidth = img.height * targetAspect;
-                  sx = (img.width - sWidth) / 2;
-                } else {
-                  sHeight = img.width / targetAspect;
-                  sy = (img.height - sHeight) / 2;
-                }
-
-                ctx.drawImage(img, sx, sy, sWidth, sHeight, area.x, area.y, area.width, area.height);
-              } else {
-                const scale = Math.min(area.width / img.width, area.height / img.height);
-                const newWidth = img.width * scale;
-                const newHeight = img.height * scale;
-                const x = area.x + (area.width - newWidth) / 2;
-                const y = area.y + (area.height - newHeight) / 2;
-                ctx.drawImage(img, x, y, newWidth, newHeight);
-              }
-
-              const updatedBaseImage = canvas.toDataURL("image/png");
-              if (formData) {
-                const updatedForm = {
-                  ...formData,
-                  canvasData: updatedBaseImage,
-                  timestamp: Date.now(),
-                  size: new Blob([updatedBaseImage]).size,
-                };
-                updateForm(updatedForm);
-                setFormData(updatedForm);
-                
-                setTimeout(() => {
-                  setClickedArea(null);
-                }, 100);
-              }
-            };
-            // 使用原始URL作为备选
-            if (game.image) {
-              img.src = game.image;
-            } else {
-              // 如果图片URL不存在，直接重置状态
-              setTimeout(() => {
-                setClickedArea(null);
-              }, 100);
-            }
-          } else {
-            // 其他错误时重置状态
+            // 重置 clickedArea 状态
             setTimeout(() => {
               setClickedArea(null);
             }, 100);
-          }
+          };
+
+          img.onerror = () => {
+              // 如果 blob URL 加载到 Image 对象时出错
+              console.error("Error loading image data from blob URL.");
+              URL.revokeObjectURL(blobUrl); // 清理
+              // 重置 clickedArea 状态
+              setTimeout(() => {
+                setClickedArea(null);
+              }, 100);
+          };
+
+          img.src = blobUrl; // 设置 Image 对象的 src
+          // --- 成功处理逻辑结束 ---
+        })
+        .catch(error => {
+          // --- 所有重试都失败后的处理逻辑 ---
+          console.error("最终获取图片失败:", error.message);
+          // 这里可以添加用户提示，告知图片加载失败
+          // alert("图片加载失败，请稍后重试或手动上传。");
+
+          // 重置 clickedArea 状态
+          setTimeout(() => {
+            setClickedArea(null);
+          }, 100);
+          // --- 最终失败处理逻辑结束 ---
         });
+
     } else {
-      // 如果没有图片也重置clickedArea状态
+      // 如果游戏本身就没有图片 URL
+      console.log("Selected game has no image URL.");
+      // 也要重置 clickedArea 状态
       setTimeout(() => {
         setClickedArea(null);
       }, 100);
     }
   };
-
   // 检测设备像素比和设备类型
   useEffect(() => {
     // 检测设备像素比

@@ -161,7 +161,7 @@ export default function HomePage() {
           <p className="text-sm text-muted-foreground">请稍候，正在处理您的表格...</p>
         </div>
       ) : (
-        <div className="grid gap-4 flex-grow mb-8">
+        <div className="grid gap-4 mb-8">
           <Card className="cursor-pointer hover:bg-muted/50 transition-colors border-dashed" onClick={handleAddNew}>
             <CardContent className="flex items-center justify-center p-6">
               <div className="flex flex-col items-center gap-2">

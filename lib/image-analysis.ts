@@ -1,188 +1,258 @@
 // Image analysis utilities to detect blank areas in forms
 
 interface BlankArea {
-  x: number
-  y: number
-  width: number
-  height: number
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
 
-export const detectBlankAreas = async (imageData: string, highTolerance = false): Promise<BlankArea[]> => {
+interface Component {
+  pixels: number; // Number of pixels in the component
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+  stdDev: number; // Standard deviation of grayscale values within bounds
+}
+
+// Grayscale calculation using luminance
+const getGrayscale = (r: number, g: number, b: number): number => {
+  return 0.299 * r + 0.587 * g + 0.114 * b;
+};
+
+// Standard deviation calculation
+const calculateStdDev = (
+  data: Uint8ClampedArray,
+  width: number,
+  startX: number,
+  startY: number,
+  w: number,
+  h: number
+): number => {
+  let sum = 0;
+  let sumSq = 0;
+  let count = 0;
+
+  const endX = Math.min(startX + w, width);
+  const endY = Math.min(startY + h, data.length / (4 * width));
+
+  for (let y = startY; y < endY; y++) {
+    for (let x = startX; x < endX; x++) {
+      const i = (y * width + x) * 4;
+      const gray = getGrayscale(data[i], data[i + 1], data[i + 2]);
+      sum += gray;
+      sumSq += gray * gray;
+      count++;
+    }
+  }
+
+  if (count === 0) return 0;
+  const mean = sum / count;
+  const variance = sumSq / count - mean * mean;
+  return Math.sqrt(Math.max(0, variance)); // Ensure non-negative variance
+};
+
+export const detectBlankAreas = async (
+  imageData: string
+): Promise<BlankArea[]> => {
   return new Promise((resolve) => {
-    const img = new Image()
-    img.crossOrigin = "anonymous"
+    const img = new Image();
+    img.crossOrigin = "anonymous";
     img.onload = () => {
-      // Create a canvas to analyze the image
-      const canvas = document.createElement("canvas")
-      canvas.width = img.width
-      canvas.height = img.height
-      const ctx = canvas.getContext("2d")
+      const canvas = document.createElement("canvas");
+      const canvasWidth = img.width;
+      const canvasHeight = img.height;
+      canvas.width = canvasWidth;
+      canvas.height = canvasHeight;
+      const ctx = canvas.getContext("2d", { willReadFrequently: true }); // Optimization hint
 
       if (!ctx) {
-        resolve([])
-        return
+        resolve([]);
+        return;
       }
 
-      // Draw the image on the canvas
-      ctx.drawImage(img, 0, 0)
+      ctx.drawImage(img, 0, 0);
+      const imgData = ctx.getImageData(0, 0, canvasWidth, canvasHeight);
+      const data = imgData.data;
+      const visited = new Uint8Array(canvasWidth * canvasHeight); // Track visited pixels
 
-      // Get image data for analysis
-      const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height)
-      const data = imgData.data
+      const components: Component[] = [];
+      const queue: [number, number][] = []; // Queue for flood fill [x, y]
 
-      // Simple blank area detection algorithm
-      // This is a basic implementation - in a real app, you'd want a more sophisticated algorithm
+      // --- Parameters (tune these based on your images) ---
+      const brightnessThreshold = 235; // Pixels brighter than this are considered potential blank space
+      const minPixelCount = 100; // Minimum number of pixels for a valid component
+      const maxStdDev = 15; // Maximum standard deviation within the bounding box for a blank area
+      const minAspectRatio = 0.2; // Minimum aspect ratio (width/height or height/width)
+      const maxAspectRatio = 5.0; // Maximum aspect ratio
+      // --- End Parameters ---
 
-      // For this example, we'll consider areas with high brightness as blank areas
-      const blankAreas: BlankArea[] = []
-      const cellSize = highTolerance ? 15 : 20 // Smaller cell size for higher tolerance
-      const threshold = highTolerance ? 220 : 240 // Lower threshold for higher tolerance
+      for (let y = 0; y < canvasHeight; y++) {
+        for (let x = 0; x < canvasWidth; x++) {
+          const index = y * canvasWidth + x;
+          const dataIndex = index * 4;
 
-      for (let y = 0; y < canvas.height; y += cellSize) {
-        for (let x = 0; x < canvas.width; x += cellSize) {
-          const cellWidth = Math.min(cellSize, canvas.width - x)
-          const cellHeight = Math.min(cellSize, canvas.height - y)
+          if (visited[index]) continue; // Skip visited pixels
 
-          // Check if this cell is blank (high brightness)
-          let totalBrightness = 0
-          let pixelCount = 0
+          const gray = getGrayscale(
+            data[dataIndex],
+            data[dataIndex + 1],
+            data[dataIndex + 2]
+          );
 
-          for (let cy = 0; cy < cellHeight; cy++) {
-            for (let cx = 0; cx < cellWidth; cx++) {
-              const pixelIndex = ((y + cy) * canvas.width + (x + cx)) * 4
+          if (gray >= brightnessThreshold) {
+            // Start Flood Fill for a new component
+            queue.push([x, y]);
+            visited[index] = 1;
 
-              // Calculate brightness (simple average of RGB)
-              const r = data[pixelIndex]
-              const g = data[pixelIndex + 1]
-              const b = data[pixelIndex + 2]
-              const brightness = (r + g + b) / 3
+            let currentPixels = 0;
+            let minX = x,
+              minY = y,
+              maxX = x,
+              maxY = y;
 
-              totalBrightness += brightness
-              pixelCount++
-            }
-          }
+            while (queue.length > 0) {
+              const [cx, cy] = queue.shift()!;
+              currentPixels++;
 
-          const avgBrightness = totalBrightness / pixelCount
+              // Update bounds
+              minX = Math.min(minX, cx);
+              minY = Math.min(minY, cy);
+              maxX = Math.max(maxX, cx);
+              maxY = Math.max(maxY, cy);
 
-          if (avgBrightness > threshold) {
-            // This is a blank area
+              // Check neighbors (4-connectivity)
+              const neighbors = [
+                [cx + 1, cy],
+                [cx - 1, cy],
+                [cx, cy + 1],
+                [cx, cy - 1],
+              ];
 
-            // Try to merge with adjacent blank areas
-            let merged = false
-            for (let i = 0; i < blankAreas.length; i++) {
-              const area = blankAreas[i]
+              for (const [nx, ny] of neighbors) {
+                if (
+                  nx >= 0 &&
+                  nx < canvasWidth &&
+                  ny >= 0 &&
+                  ny < canvasHeight
+                ) {
+                  const neighborIndex = ny * canvasWidth + nx;
+                  const neighborDataIndex = neighborIndex * 4;
 
-              // Check if this cell is adjacent to an existing area
-              // With higher tolerance, we allow for more merging
-              const adjacencyThreshold = highTolerance ? cellSize * 2 : cellSize
-
-              if (
-                Math.abs(x - (area.x + area.width)) < adjacencyThreshold &&
-                y >= area.y - adjacencyThreshold &&
-                y <= area.y + area.height + adjacencyThreshold
-              ) {
-                // Merge with this area
-                const newWidth = Math.max(area.x + area.width, x + cellWidth) - Math.min(area.x, x)
-                const newHeight = Math.max(area.y + area.height, y + cellHeight) - Math.min(area.y, y)
-
-                area.x = Math.min(area.x, x)
-                area.y = Math.min(area.y, y)
-                area.width = newWidth
-                area.height = newHeight
-
-                merged = true
-                break
-              }
-
-              if (
-                Math.abs(y - (area.y + area.height)) < adjacencyThreshold &&
-                x >= area.x - adjacencyThreshold &&
-                x <= area.x + area.width + adjacencyThreshold
-              ) {
-                // Merge with this area
-                const newWidth = Math.max(area.x + area.width, x + cellWidth) - Math.min(area.x, x)
-                const newHeight = Math.max(area.y + area.height, y + cellHeight) - Math.min(area.y, y)
-
-                area.x = Math.min(area.x, x)
-                area.y = Math.min(area.y, y)
-                area.width = newWidth
-                area.height = newHeight
-
-                merged = true
-                break
+                  if (!visited[neighborIndex]) {
+                    const neighborGray = getGrayscale(
+                      data[neighborDataIndex],
+                      data[neighborDataIndex + 1],
+                      data[neighborDataIndex + 2]
+                    );
+                    if (neighborGray >= brightnessThreshold) {
+                      visited[neighborIndex] = 1;
+                      queue.push([nx, ny]);
+                    }
+                  }
+                }
               }
             }
 
-            if (!merged) {
-              // Add as a new blank area
-              blankAreas.push({
-                x,
-                y,
-                width: cellWidth,
-                height: cellHeight,
-              })
+            // --- Component Analysis ---
+            if (currentPixels >= minPixelCount) {
+              const compWidth = maxX - minX + 1;
+              const compHeight = maxY - minY + 1;
+
+              // Calculate standard deviation within the bounding box
+              const stdDev = calculateStdDev(
+                data,
+                canvasWidth,
+                minX,
+                minY,
+                compWidth,
+                compHeight
+              );
+
+              // Aspect Ratio Check
+              const aspectRatio = compWidth / compHeight;
+              const validAspectRatio =
+                (aspectRatio >= minAspectRatio &&
+                  aspectRatio <= maxAspectRatio) ||
+                (1 / aspectRatio >= minAspectRatio &&
+                  1 / aspectRatio <= maxAspectRatio);
+
+              if (stdDev <= maxStdDev && validAspectRatio) {
+                components.push({
+                  pixels: currentPixels,
+                  minX: minX,
+                  minY: minY,
+                  maxX: maxX,
+                  maxY: maxY,
+                  stdDev: stdDev,
+                });
+              }
+            }
+          } else {
+            visited[index] = 1; // Mark non-blank pixels as visited too
+          }
+        }
+      }
+
+      // --- Convert valid components to BlankArea format ---
+      // Basic filtering / potential merging could happen here if needed,
+      // but let's start without complex merging.
+
+      const blankAreas: BlankArea[] = components.map((comp) => ({
+        x: comp.minX,
+        y: comp.minY,
+        width: comp.maxX - comp.minX + 1,
+        height: comp.maxY - comp.minY + 1,
+      }));
+
+      // Optional: Simple Overlap Merging (if needed)
+      // This is basic; more sophisticated merging might be required
+      let merged = true;
+      while (merged) {
+        merged = false;
+        for (let i = 0; i < blankAreas.length; i++) {
+          for (let j = i + 1; j < blankAreas.length; j++) {
+            const a = blankAreas[i];
+            const b = blankAreas[j];
+
+            // Check for overlap
+            if (
+              a.x < b.x + b.width &&
+              a.x + a.width > b.x &&
+              a.y < b.y + b.height &&
+              a.y + a.height > b.y
+            ) {
+              // Merge b into a
+              const newX = Math.min(a.x, b.x);
+              const newY = Math.min(a.y, b.y);
+              const newW = Math.max(a.x + a.width, b.x + b.width) - newX;
+              const newH = Math.max(a.y + a.height, b.y + b.height) - newY;
+
+              a.x = newX;
+              a.y = newY;
+              a.width = newW;
+              a.height = newH;
+
+              // Remove b and restart check
+              blankAreas.splice(j, 1);
+              merged = true;
+              break; // Restart inner loop
             }
           }
+          if (merged) break; // Restart outer loop
         }
       }
 
-      // Merge overlapping areas
-      const mergedAreas: BlankArea[] = []
+      resolve(blankAreas);
+    };
 
-      for (const area of blankAreas) {
-        let merged = false
+    img.onerror = () => {
+      console.error("Failed to load image for analysis.");
+      resolve([]);
+    };
 
-        for (let i = 0; i < mergedAreas.length; i++) {
-          const existingArea = mergedAreas[i]
-
-          // Check if areas overlap or are very close (for higher tolerance)
-          const overlapThreshold = highTolerance ? cellSize * 2 : 0
-
-          if (
-            area.x - overlapThreshold < existingArea.x + existingArea.width &&
-            area.x + area.width + overlapThreshold > existingArea.x &&
-            area.y - overlapThreshold < existingArea.y + existingArea.height &&
-            area.y + area.height + overlapThreshold > existingArea.y
-          ) {
-            // Merge areas
-            const newX = Math.min(area.x, existingArea.x)
-            const newY = Math.min(area.y, existingArea.y)
-            const newWidth = Math.max(area.x + area.width, existingArea.x + existingArea.width) - newX
-            const newHeight = Math.max(area.y + area.height, existingArea.y + existingArea.height) - newY
-
-            existingArea.x = newX
-            existingArea.y = newY
-            existingArea.width = newWidth
-            existingArea.height = newHeight
-
-            merged = true
-            break
-          }
-        }
-
-        if (!merged) {
-          mergedAreas.push({ ...area })
-        }
-      }
-
-      // Filter out very small areas
-      const minSize = highTolerance ? cellSize : cellSize * 2
-      const filteredAreas = mergedAreas.filter((area) => area.width >= minSize && area.height >= minSize)
-
-      // Expand areas slightly for better detection
-      if (highTolerance) {
-        filteredAreas.forEach((area) => {
-          area.x = Math.max(0, area.x - cellSize / 2)
-          area.y = Math.max(0, area.y - cellSize / 2)
-          area.width = Math.min(canvas.width - area.x, area.width + cellSize)
-          area.height = Math.min(canvas.height - area.y, area.height + cellSize)
-        })
-      }
-
-      resolve(filteredAreas)
-    }
-
-    img.src = imageData
-  })
-}
+    img.src = imageData;
+  });
+};
 
