@@ -14,7 +14,9 @@ function isValidImageUrl(url: string): boolean {
     // 只允许从bangumi的图片服务器获取图片
     return (
       urlObj.hostname === "lain.bgm.tv" &&
-      urlObj.pathname.startsWith("/pic/cover/")
+      (urlObj.pathname.startsWith("/pic/cover/") ||
+        urlObj.pathname.startsWith("/pic/crt/") ||
+        urlObj.pathname.startsWith("/pic/photo/"))
     );
   } catch (e) {
     return false;
