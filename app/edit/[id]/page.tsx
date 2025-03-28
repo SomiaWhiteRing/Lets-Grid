@@ -49,7 +49,9 @@ export default function EditFormPage() {
   const [adaptiveUpload, setAdaptiveUpload] = useState(true)
   const [brushColor, setBrushColor] = useState("#FF0000")
   const [textColor, setTextColor] = useState("#000000")
-  const [brushSize, setBrushSize] = useState(5)
+  const [pixelRatio, setPixelRatio] = useState(1)
+  const [isMobile, setIsMobile] = useState(false)
+  const [brushSize, setBrushSize] = useState(8)
   const [eraserSize, setEraserSize] = useState(20)
   const [textSize, setTextSize] = useState(24)
   const [history, setHistory] = useState<string[]>([])
@@ -454,7 +456,8 @@ export default function EditFormPage() {
         if (ctx) {
           ctx.beginPath()
           ctx.moveTo(x, y)
-          ctx.lineWidth = brushSize
+          // 根据设备像素比调整实际绘制的线条粗细
+          ctx.lineWidth = isMobile ? brushSize * pixelRatio : brushSize
           ctx.lineCap = "round"
           ctx.strokeStyle = brushColor
           ctx.globalCompositeOperation = "source-over"
@@ -466,7 +469,8 @@ export default function EditFormPage() {
         if (ctx) {
           ctx.beginPath()
           ctx.moveTo(x, y)
-          ctx.lineWidth = eraserSize
+          // 根据设备像素比调整实际绘制的橡皮粗细
+          ctx.lineWidth = isMobile ? eraserSize * pixelRatio : eraserSize
           ctx.lineCap = "round"
           ctx.globalCompositeOperation = "destination-out"
         }
@@ -517,7 +521,8 @@ export default function EditFormPage() {
         if (ctx) {
           ctx.beginPath()
           ctx.moveTo(x, y)
-          ctx.lineWidth = brushSize
+          // 根据设备像素比调整实际绘制的线条粗细
+          ctx.lineWidth = isMobile ? brushSize * pixelRatio : brushSize
           ctx.lineCap = "round"
           ctx.strokeStyle = brushColor
           ctx.globalCompositeOperation = "source-over"
@@ -529,7 +534,8 @@ export default function EditFormPage() {
         if (ctx) {
           ctx.beginPath()
           ctx.moveTo(x, y)
-          ctx.lineWidth = eraserSize
+          // 根据设备像素比调整实际绘制的橡皮粗细
+          ctx.lineWidth = isMobile ? eraserSize * pixelRatio : eraserSize
           ctx.lineCap = "round"
           ctx.globalCompositeOperation = "destination-out"
         }
@@ -809,7 +815,9 @@ export default function EditFormPage() {
 
       // 如果有文本，绘制预览
       if (text) {
-        ctx.font = `${textSize}px Arial`
+        // 根据设备像素比调整实际绘制的文本大小
+        const adjustedTextSize = isMobile ? textSize * pixelRatio : textSize
+        ctx.font = `${adjustedTextSize}px Arial`
         ctx.fillStyle = textColor
         ctx.globalCompositeOperation = "source-over"
         ctx.fillText(text, textPosition.x, textPosition.y)
@@ -1255,6 +1263,20 @@ export default function EditFormPage() {
     }
   };
 
+  // 检测设备像素比和设备类型
+  useEffect(() => {
+    // 检测设备像素比
+    const ratio = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+    setPixelRatio(ratio);
+    
+    // 检测是否为移动设备
+    const mobile = typeof window !== 'undefined' ? window.innerWidth < 768 : false;
+    setIsMobile(mobile);
+    
+    // 不再根据设备调整数值大小，保持统一的数值显示
+    // 实际绘制时会根据设备像素比进行调整
+  }, []);
+
   const renderDrawingToolbar = () => {
     if (currentMode !== "draw") return null
 
@@ -1376,8 +1398,8 @@ export default function EditFormPage() {
                 </Label>
                 <Slider
                   id="brush-size"
-                  min={1}
-                  max={20}
+                  min={4}
+                  max={48}
                   step={1}
                   value={[brushSize]}
                   onValueChange={(value) => setBrushSize(value[0])}
