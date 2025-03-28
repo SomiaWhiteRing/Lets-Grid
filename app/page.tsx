@@ -226,7 +226,7 @@ export default function HomePage() {
           <p className="flex items-center justify-center mb-1">
           如果觉得对你有用请不吝→
           <a 
-            href="https://github.com/SomiaWhiteRing/gamegrid" 
+            href="https://github.com/SomiaWhiteRing/lets-grid" 
             target="_blank"
             rel="noopener noreferrer"
             className="ml-2 inline-flex items-center"
@@ -239,7 +239,7 @@ export default function HomePage() {
           </a>
         </p>
         <p className="flex items-center justify-center">
-          <a className="text-blue-500 mr-1" href="https://weibo.com/6571509464/Phs2X0DIy">苍旻白轮</a> Powered by Vercel & Bangumi
+          <a className="text-blue-500 mr-1" href="https://weibo.com/6571509464/PkCoc0jDv">苍旻白轮</a> Powered by Vercel & Bangumi
         </p>
         <p className="flex items-center justify-center mt-1">
           前作(?)：<a className="text-blue-500" href="https://gamegrid.shatranj.space/">游戏生涯个人喜好表</a>
