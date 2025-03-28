@@ -15,8 +15,7 @@ function isValidImageUrl(url: string): boolean {
     return (
       urlObj.hostname === "lain.bgm.tv" &&
       (urlObj.pathname.startsWith("/pic/cover/") ||
-        urlObj.pathname.startsWith("/pic/crt/") ||
-        urlObj.pathname.startsWith("/pic/photo/"))
+        urlObj.pathname.startsWith("/pic/crt/"))
     );
   } catch (e) {
     return false;

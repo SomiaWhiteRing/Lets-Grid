@@ -13,7 +13,7 @@ const IMAGE_PREFIX = "https://lain.bgm.tv/pic/cover/";
 // 角色图片前缀
 const CHARACTER_PREFIX = "https://lain.bgm.tv/pic/crt/";
 // 人物图片前缀
-const PERSON_PREFIX = "https://lain.bgm.tv/pic/photo/";
+const PERSON_PREFIX = "https://lain.bgm.tv/pic/crt/";
 
 // 请求重试函数
 async function fetchWithRetry(
